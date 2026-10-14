@@ -86,6 +86,13 @@
 _FM_PF_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_PF_LIB_DIR="."
 # shellcheck source=bin/fm-x-lib.sh
 . "$_FM_PF_LIB_DIR/fm-x-lib.sh"
+# The pr_url deliverable rule is fm-pr-lib.sh's. It is functions and empty
+# globals only, so it is sourced once rather than re-initialising a caller's
+# parsed identity.
+if ! declare -F fm_pr_url_tasks_axi_link_valid >/dev/null 2>&1; then
+  # shellcheck source=bin/fm-pr-lib.sh
+  . "$_FM_PF_LIB_DIR/fm-pr-lib.sh"
+fi
 
 FM_PF_DIRNAME='public-followup'
 # Consumed by the sourcing scripts, not by this library.
@@ -234,7 +241,8 @@ fm_pf_bound_bytes() {
 # eventMatchesExpected, failureDeliverablesAreSafe, REPORT_PATH_RE,
 # COMMIT_SHA_RE, and SAFE_CODE_RE in tasks-axi's public-followup.js, and isPrUrl
 # in tasks-axi's pr-url.js, which is the seam public-followup.js classifies
-# pr_url through - so a bad value is refused where it is written and a refusal
+# pr_url through (bin/fm-pr-lib.sh's fm_pr_url_tasks_axi_link_valid owns that
+# mirror) - so a bad value is refused where it is written and a refusal
 # can say which value was wrong. Every rule here is keyed on the promise's
 # expected final and the event's outcome together, because that is the pair
 # tasks-axi keys them on.
@@ -302,34 +310,6 @@ fm_pf_deliverable_keys() {
   esac
 }
 
-# fm_pf_pr_url_valid <url>: 0 when <url> is byte-for-byte a canonical pull
-# request URL. Mirrors isPrUrl in tasks-axi's pr-url.js: exactly
-# https://github.com/<owner>/<repo>/pull/<n> on github.com, or
-# https://<lowercase-dns-host>/<owner>/<repo>/pulls/<n> on any other host, with
-# <n> positive and without leading zeros. The route and the host decide each
-# other, so a singular route off github.com and a plural route on it are both
-# refused, as are an owner or repo of "." or "..".
-fm_pf_pr_url_valid() {
-  local url=$1 rest host owner repo route
-  local label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
-  local segment='[A-Za-z0-9._-]+'
-  printf '%s\n' "$url" | LC_ALL=C grep -Eq \
-    "^https://${label}(\\.${label})*/${segment}/${segment}/(pull|pulls)/[1-9][0-9]*\$" \
-    || return 1
-  rest=${url#https://}
-  host=${rest%%/*}; rest=${rest#*/}
-  owner=${rest%%/*}; rest=${rest#*/}
-  repo=${rest%%/*}; rest=${rest#*/}
-  route=${rest%%/*}
-  case "$owner" in .|..) return 1 ;; esac
-  case "$repo" in .|..) return 1 ;; esac
-  if [ "$route" = pull ]; then
-    [ "$host" = github.com ]
-  else
-    [ "$host" != github.com ]
-  fi
-}
-
 # fm_pf_deliverable_problem <expected-final> <outcome> <key> <value>: silent exit
 # 0 when tasks-axi would accept <key>=<value> on a work event with <outcome>
 # against a promise whose expected final is <expected-final> (empty when the
@@ -376,7 +356,7 @@ fm_pf_deliverable_problem() {
   esac
   format=$(fm_pf_deliverable_format "$key")
   case "$key" in
-    pr_url) fm_pf_pr_url_valid "$value" && return 0 ;;
+    pr_url) fm_pr_url_tasks_axi_link_valid "$value" && return 0 ;;
     report_path) re='^data/[A-Za-z0-9][A-Za-z0-9._-]*/report\.md$' ;;
     commit_sha) re='^[a-f0-9]{7,64}$' ;;
     error_code) re='^[a-z][a-z0-9._-]{0,63}$' ;;

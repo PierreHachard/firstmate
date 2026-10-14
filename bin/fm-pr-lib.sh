@@ -293,6 +293,39 @@ fm_pr_url_parse() {
   FM_PR_NUMBER=${BASH_REMATCH[4]}
 }
 
+# 0 when <url> is byte-for-byte a pull request link tasks-axi stores, which is a
+# narrower set than fm_pr_url_parse reads: a GitLab merge request or a Gerrit
+# change is a review Firstmate watches but tasks-axi refuses as a --pr link.
+# Mirrors isPrUrl in tasks-axi's pr-url.js: exactly
+# https://github.com/<owner>/<repo>/pull/<n> on github.com, or
+# https://<lowercase-dns-host>/<owner>/<repo>/pulls/<n> on any other host, with
+# <n> positive and without leading zeros. The route and the host decide each
+# other, so a singular route off github.com and a plural route on it are both
+# refused, as are an owner or repo of "." or "..".
+# tasks-axi exposes no validation-only command; tests/fm-public-followup.test.sh
+# pins this mirror against the real consumer, so re-pin both together when
+# tasks-axi changes it.
+fm_pr_url_tasks_axi_link_valid() {  # <url>
+  local url=$1 rest host owner repo route
+  local label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
+  local segment='[A-Za-z0-9._-]+'
+  printf '%s\n' "$url" | LC_ALL=C grep -Eq \
+    "^https://${label}(\\.${label})*/${segment}/${segment}/(pull|pulls)/[1-9][0-9]*\$" \
+    || return 1
+  rest=${url#https://}
+  host=${rest%%/*}; rest=${rest#*/}
+  owner=${rest%%/*}; rest=${rest#*/}
+  repo=${rest%%/*}; rest=${rest#*/}
+  route=${rest%%/*}
+  case "$owner" in .|..) return 1 ;; esac
+  case "$repo" in .|..) return 1 ;; esac
+  if [ "$route" = pull ]; then
+    [ "$host" = github.com ]
+  else
+    [ "$host" != github.com ]
+  fi
+}
+
 fm_pr_head_valid() {
   local head=${1-}
   local LC_ALL=C
