@@ -78,9 +78,9 @@ FM_BACKLOG_CLOSE_REPLAY_RESULT=
 # library does not source fm-tasks-axi-lib.sh does not apply.
 # shellcheck source=bin/fm-timeout-lib.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
-# fm-pr-lib.sh owns which URL is a Gerrit change. It is functions and empty
-# globals only, so it is sourced once rather than re-initialising a caller's
-# parsed identity.
+# fm-pr-lib.sh owns which review URL tasks-axi stores as a pull request link and
+# which forge a review URL names. It is functions and empty globals only, so it
+# is sourced once rather than re-initialising a caller's parsed identity.
 if ! declare -F fm_pr_url_parse >/dev/null 2>&1; then
   # shellcheck source=bin/fm-pr-lib.sh disable=SC1091
   . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-pr-lib.sh"
@@ -516,12 +516,21 @@ fm_backlog_start() {  # <data-dir> <id>
   fm_backlog_mutate "$1" start "$2"
 }
 
-# tasks-axi takes a --pr link only as a canonical GitHub or Forgejo pull request
-# and refuses anything else, so a Gerrit change URL is recorded on the row as a
-# note instead. The subshell keeps the parse from overwriting a caller's
-# FM_PR_* identity.
-fm_backlog_pr_is_gerrit_change() {  # <url>
-  ( fm_pr_url_parse "$1" && [ "$FM_PR_PROVIDER" = gerrit ] )
+# tasks-axi takes a --pr link only in the shape fm_pr_url_tasks_axi_link_valid
+# mirrors and refuses any other review URL, such as a GitLab merge request or a
+# Gerrit change, so such a URL is recorded on the row as this note instead. The
+# rewrite happens at the tasks-axi call rather than in the pending-close record,
+# so a record already holding that URL as --pr replays to a close instead of
+# into the same refusal at every session start. The subshell keeps the parse
+# from overwriting a caller's FM_PR_* identity.
+fm_backlog_review_note() {  # <url>
+  local provider
+  provider=$( fm_pr_url_parse "$1" && printf '%s' "$FM_PR_PROVIDER" ) || provider=
+  case "$provider" in
+    gerrit) printf 'Gerrit change %s\n' "$1" ;;
+    gitlab) printf 'GitLab merge request %s\n' "$1" ;;
+    *) printf 'Review %s\n' "$1" ;;
+  esac
 }
 
 fm_backlog_done() {  # <data-dir> <id> [flag...]
@@ -529,9 +538,9 @@ fm_backlog_done() {  # <data-dir> <id> [flag...]
   local -a done_args=()
   shift 2
   for arg in "$@"; do
-    if [ "$previous_arg" = --pr ] && fm_backlog_pr_is_gerrit_change "$arg"; then
+    if [ "$previous_arg" = --pr ] && ! fm_pr_url_tasks_axi_link_valid "$arg"; then
       done_args[${#done_args[@]}-1]=--note
-      done_args+=("Gerrit change $arg")
+      done_args+=("$(fm_backlog_review_note "$arg")")
     else
       done_args+=("$arg")
     fi
@@ -543,7 +552,7 @@ fm_backlog_done() {  # <data-dir> <id> [flag...]
 fm_backlog_row_artifact_supported() {
   local id=$1 flag=${2:-} value=${3:-}
   case "$flag" in
-    --pr) ! fm_backlog_pr_is_gerrit_change "$value" ;;
+    --pr) fm_pr_url_tasks_axi_link_valid "$value" ;;
     --report) [ "$value" = "data/$id/report.md" ] ;;
     *) return 1 ;;
   esac
@@ -579,7 +588,7 @@ fm_backlog_retain() {  # <data-dir> <id> [flag...]
           deliverable="${deliverable:+$deliverable; }PR $arg"
           row_args=(--pr "$arg")
         else
-          deliverable="${deliverable:+$deliverable; }Gerrit change $arg"
+          deliverable="${deliverable:+$deliverable; }$(fm_backlog_review_note "$arg")"
         fi
         ;;
       --note) deliverable="${deliverable:+$deliverable; }$arg" ;;
